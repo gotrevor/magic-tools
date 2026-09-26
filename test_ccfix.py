@@ -133,6 +133,28 @@ def test_no_trailing_blank_lines():
     assert run("  ls\n\n\n") == "ls"
 
 
+# --- real-paste corpus (tests/ccfix/*.in.txt + hand-written *.out.txt) ---------------
+
+FIXTURES = BIN / "tests" / "ccfix"
+CASES = sorted(p.name[: -len(".in.txt")] for p in FIXTURES.glob("*.in.txt"))
+
+
+@pytest.mark.parametrize("name", CASES)
+def test_fixture(name):
+    src = (FIXTURES / f"{name}.in.txt").read_text()
+    expected = FIXTURES / f"{name}.out.txt"
+    assert expected.exists(), f"write {expected.name} by hand (see tests/ccfix/README.md)"
+    args: list[str] = []
+    first, _, rest = src.partition("\n")
+    if first.startswith("# ccfix-args:"):
+        args, src = first.split(":", 1)[1].split(), rest
+    assert run(src, *args) == expected.read_text()
+
+
+def test_corpus_is_not_empty():
+    assert CASES, "the fixture corpus vanished"
+
+
 # --- clipboard + undo ----------------------------------------------------------
 
 @pytest.fixture
@@ -162,3 +184,24 @@ def test_undo_with_nothing_saved_fails(fakeclip):
     _, env = fakeclip
     r = subprocess.run([str(SCRIPT), "undo"], env=env, capture_output=True, text=True)
     assert r.returncode == 1
+
+
+def test_capture_saves_clipboard_as_fixture_input(fakeclip, tmp_path):
+    clip, env = fakeclip
+    clip.write_text("  ▎ raw paste\n")
+    # Run a COPY of ccfix so capture writes into a temp tests/ccfix, not the real corpus.
+    (tmp_path / "ccfix").write_bytes(SCRIPT.read_bytes())
+    (tmp_path / "ccfix").chmod(0o755)
+    r = subprocess.run([str(tmp_path / "ccfix"), "capture", "my-case"], env=env,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "tests" / "ccfix" / "my-case.in.txt").read_text() == "  ▎ raw paste\n"
+    again = subprocess.run([str(tmp_path / "ccfix"), "capture", "my-case"], env=env,
+                           capture_output=True, text=True)
+    assert again.returncode == 1  # never clobbers an existing case
+
+
+def test_capture_rejects_bad_name(fakeclip):
+    _, env = fakeclip
+    r = subprocess.run([str(SCRIPT), "capture", "../escape"], env=env, capture_output=True)
+    assert r.returncode == 2
