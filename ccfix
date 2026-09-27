@@ -57,10 +57,11 @@ SENTENCE_END_RE = re.compile(r"[.?!][\"')\]]*$")
 CURLY = str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'", " ": " "})
 
 
-def clean_lines(text: str) -> tuple[list[str], bool]:
+def clean_lines(text: str) -> tuple[list[str], bool, int | None]:
     """Strip trailing space, NBSP, the ⏺ bullet, and the ▎ quote bar.
 
-    Returns the lines and whether any quote bar was present.  Lengths for the
+    Returns the lines, whether any quote bar was present, and the index of a
+    mid-line fragment (see `partial_start`).  Lengths for the
     wrap test are taken AFTER this, so the bar and bullet don't skew the width.
     """
     lines = [ln.replace(" ", " ").rstrip() for ln in text.replace("\r\n", "\n").split("\n")]
@@ -68,13 +69,37 @@ def clean_lines(text: str) -> tuple[list[str], bool]:
     if quoted:
         lines = [QUOTE_RE.sub("", ln) if QUOTE_RE.match(ln) else ln.strip() for ln in lines]
     lines = [BULLET_RE.sub(r"\1  ", ln) for ln in lines]
-    return dedent(lines), quoted
+    start = partial_start(lines)
+    return dedent(lines, start), quoted, start
 
 
-def dedent(lines: list[str]) -> list[str]:
-    indents = [len(ln) - len(ln.lstrip(" ")) for ln in lines if ln.strip()]
+def indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def partial_start(lines: list[str]) -> int | None:
+    """Index of the first line if the selection began mid-line, else None.
+
+    A hand selection that starts partway through a rendered line copies no
+    indent for that line, while the lines under it keep CC's indent.  So a
+    flush first line above uniformly indented ones is a fragment whose real
+    start column is unknown - it ran to the right margin, and the break after
+    it was a wrap.
+    """
+    body = [i for i, ln in enumerate(lines) if ln.strip()]
+    if len(body) < 2:
+        return None
+    rest = [indent(lines[i]) for i in body[1:]]
+    first = lines[body[0]]
+    if indent(first) < min(rest) and not LIST_RE.match(first):
+        return body[0]
+    return None
+
+
+def dedent(lines: list[str], start: int | None) -> list[str]:
+    indents = [indent(ln) for i, ln in enumerate(lines) if ln.strip() and i != start]
     cut = min(indents, default=0)
-    return [ln[cut:] for ln in lines]
+    return [ln.lstrip(" ") if i == start else ln[cut:] for i, ln in enumerate(lines)]
 
 
 def first_word(line: str) -> str:
@@ -115,7 +140,7 @@ def join(prev: str, raw_prev: str, nxt: str, width: int, mode: str) -> str:
 
 
 def fix(text: str, mode: str = "auto", width: int | None = None) -> str:
-    lines, quoted = clean_lines(text)
+    lines, quoted, fragment = clean_lines(text)
     if mode == "auto":
         mode = detect(lines, quoted)
     if width is None:
@@ -123,8 +148,9 @@ def fix(text: str, mode: str = "auto", width: int | None = None) -> str:
 
     out: list[str] = []
     raw_prev = ""
-    for ln in lines:
-        if out and was_wrapped(raw_prev, ln, width):
+    for i, ln in enumerate(lines):
+        after_fragment = i and i - 1 == fragment and ln.strip() and not LIST_RE.match(ln)
+        if out and (after_fragment or was_wrapped(raw_prev, ln, width)):
             out[-1] = join(out[-1], raw_prev, ln, width, mode)
         else:
             out.append(ln)

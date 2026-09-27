@@ -74,6 +74,12 @@ def test_cc_bullet_and_indent_stripped():
     assert run(text, "--width", "43") == "Done.  The build is green and the tests pass."
 
 
+def test_bullet_first_line_is_not_a_midline_fragment():
+    # The ⏺ bullet sits at column 0 but stands in for CC's indent, so the
+    # short "Run this:" line is a whole line, not a partial selection.
+    assert run("⏺ Run this:\n  ls -la\n") == "Run this:\nls -la"
+
+
 def test_list_items_not_joined():
     text = ("  - first item that runs right to the edge\n"
             "  - second\n")
