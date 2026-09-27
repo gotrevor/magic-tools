@@ -123,6 +123,11 @@ def test_backslash_continuation_preserved():
     assert run(text, "--width", "44") == "curl -sSL https://example.com/a/long/path \\\n  -o out.json"
 
 
+def test_flush_backslash_line_above_indented_continuation_stays_split():
+    # A flush line ending in a backslash is a whole command, not a fragment.
+    assert run("curl -sS \\\n    -o out.json\n") == "curl -sS \\\n    -o out.json"
+
+
 def test_curly_quotes_straightened_in_cmd():
     assert run("  echo “hi” ‘there’\n", "cmd") == "echo \"hi\" 'there'"
 

@@ -91,7 +91,7 @@ def partial_start(lines: list[str]) -> int | None:
         return None
     rest = [indent(lines[i]) for i in body[1:]]
     first = lines[body[0]]
-    if indent(first) < min(rest) and not LIST_RE.match(first):
+    if indent(first) == 0 < min(rest) and not first.endswith("\\") and not LIST_RE.match(first):
         return body[0]
     return None
 
