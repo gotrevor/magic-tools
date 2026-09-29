@@ -21,7 +21,7 @@ clean text back.
                        exact beats the inferred floor below
 
 What it does:
-  - strips the `▎` quote bar, CC's `⏺` bullet, and the common indent
+  - strips the `▎` quote bar, CC's `⏺` / Codex's `•` bullet, and the common indent
   - joins lines CC wrapped, keeping real newlines (see `was_wrapped`)
   - prose: one paragraph per line, blank line between paragraphs, two spaces
     after a sentence-ending period when a wrap fell there
@@ -51,14 +51,14 @@ FIXTURES = Path(__file__).resolve().parent / "tests" / "ccfix"
 CACHE = Path(os.environ.get("CCFIX_CACHE", Path.home() / ".cache" / "ccfix"))
 
 QUOTE_RE = re.compile(r"^\s*▎ ?")
-BULLET_RE = re.compile(r"^(\s*)⏺ ")
-LIST_RE = re.compile(r"^\s*([-*•]|\d+[.)]|\$|#|>)\s")
+BULLET_RE = re.compile(r"^(\s*)[⏺•] ")  # CC and Codex message bullets
+LIST_RE = re.compile(r"^\s*([-*]|\d+[.)]|\$|#|>)\s")
 SENTENCE_END_RE = re.compile(r"[.?!][\"')\]]*$")
 CURLY = str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'", " ": " "})
 
 
 def clean_lines(text: str) -> tuple[list[str], bool, int | None]:
-    """Strip trailing space, NBSP, the ⏺ bullet, and the ▎ quote bar.
+    """Strip trailing space, NBSP, the ⏺/• bullet, and the ▎ quote bar.
 
     Returns the lines, whether any quote bar was present, and the index of a
     mid-line fragment (see `partial_start`).  Lengths for the
