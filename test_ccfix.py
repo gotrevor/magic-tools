@@ -164,6 +164,33 @@ def test_two_paths_word_wrapped_keep_their_space():
     assert run(text, "cmd", "--width", "30") == "cp --preserve /src/a.txt /dst/file.txt"
 
 
+def test_prose_long_words_at_margin_keep_their_space():
+    # Line 1 is 25 = width, and "uncharacteristically" (20) + "internationalized" (17)
+    # = 37 > 25, but neither is a path or URL: words are never cut mid-token.
+    text = ("  ▎ some uncharacteristically\n"
+            "  ▎ internationalized prose.\n")
+    assert run(text, "--width", "25") == "some uncharacteristically internationalized prose."
+
+
+def test_prose_fragment_before_url_line_keeps_its_space():
+    # A mid-line fragment, then a URL alone on the widest line (the inferred width):
+    # "at" + the URL exceeds the width, yet "at" is a word, not the head of a URL.
+    text = ("The details are at\n"
+            "  https://github.com/gotrevor/magic-tools/blob/main/tests/ccfix/README.md\n"
+            "  if you want them.\n")
+    assert run(text) == ("The details are at https://github.com/gotrevor/magic-tools/blob/main/"
+                         "tests/ccfix/README.md if you want them.")
+
+
+def test_prose_fragment_before_path_line_keeps_its_space():
+    # Same shape with an absolute path: "in" is a word, so the `/` starts a new token.
+    text = ("The fixtures live in\n"
+            "  /Users/someone/src/magic-tools/tests/ccfix/fixtures-for-the-suite/inputs\n"
+            "  for now.\n")
+    assert run(text) == ("The fixtures live in /Users/someone/src/magic-tools/tests/ccfix/"
+                         "fixtures-for-the-suite/inputs for now.")
+
+
 def test_short_line_before_long_token_line_keeps_its_space():
     # 9+1+31 > 30 is a wrap, and `/tmp` + the 31-char token can't share a line, but
     # "run: /tmp" stops well short of the margin, so the renderer did not cut a token there.

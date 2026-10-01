@@ -131,15 +131,23 @@ def detect(lines: list[str], quoted: bool) -> str:
     return "cmd"
 
 
-def join(prev: str, raw_prev: str, nxt: str, width: int, mode: str, fragment: bool = False) -> str:
+def join(prev: str, raw_prev: str, nxt: str, width: int, mode: str, fragment: bool = False,
+         exact: bool = False) -> str:
     nxt = nxt.lstrip()
-    if (fragment or len(raw_prev) >= width) and len(prev.split()[-1]) + len(first_word(nxt)) > width:
-        # The token ending `prev` plus the word starting `nxt` is longer than any line,
-        # so no word-wrap put a space there: the renderer split one token at the margin
-        # (often next to a `/` in a path).  A fragment's start column is unknown, so it
-        # is assumed to have reached the margin.
+    tail = prev.split()[-1]
+    # An inferred width is the widest line, so that line "reaches the margin" by definition
+    # even when it was word-wrapped whole.  Then trust a cut only at a `/`, where every
+    # real cut seen so far has landed; a URL or path followed by a word keeps its space.
+    cut = exact or prev.endswith("/") or nxt.startswith("/")
+    if (cut and "/" in tail and (fragment or len(raw_prev) >= width)
+            and len(tail) + len(first_word(nxt)) > width):
+        # A path or URL ending `prev`, plus the word starting `nxt`, is longer than any
+        # line, so no word-wrap put a space there: the renderer split that token at the
+        # margin (often next to a `/`).  A fragment's start column is unknown, so it is
+        # assumed to have reached the margin.  Prose words are never cut mid-token, so
+        # a tail without a `/` keeps its space even when the next line is one long token.
         return prev + nxt
-    if len(raw_prev) == width and " " not in raw_prev.strip():
+    if cut and len(raw_prev) == width and " " not in raw_prev.strip():
         # A single unbroken token filling the line was split mid-token (a long URL or path).
         return prev + nxt
     if URL_TAIL_RE.search(prev) and not URL_HEAD_RE.match(nxt):
@@ -154,6 +162,7 @@ def join(prev: str, raw_prev: str, nxt: str, width: int, mode: str, fragment: bo
 
 def fix(text: str, mode: str = "auto", width: int | None = None) -> str:
     lines, quoted, fragment = clean_lines(text)
+    exact = width is not None
     if mode == "auto":
         mode = detect(lines, quoted)
     if width is None:
@@ -164,7 +173,7 @@ def fix(text: str, mode: str = "auto", width: int | None = None) -> str:
     for i, ln in enumerate(lines):
         after_fragment = i and i - 1 == fragment and ln.strip() and not LIST_RE.match(ln)
         if out and (after_fragment or was_wrapped(raw_prev, ln, width)):
-            out[-1] = join(out[-1], raw_prev, ln, width, mode, bool(after_fragment))
+            out[-1] = join(out[-1], raw_prev, ln, width, mode, bool(after_fragment), exact)
         else:
             out.append(ln)
         raw_prev = ln
