@@ -140,6 +140,21 @@ def test_long_token_split_mid_token_is_glued():
     assert run(text, "cmd", "--width", "40") == "open https://x.io/ https://example.com/aaaaaaaaaaaaaaaaaaaabbbb"
 
 
+def test_url_wrapped_at_query_mark_is_glued():
+    # Stripped lengths 31, 8; at width 35, 31+1+8 = 40 > 35 is a wrap.  The line
+    # ends in a URL's `?`, so no space goes in.
+    text = ("  see https://example.com/search?\n"
+            "  q=lean+4\n")
+    assert run(text, "cmd", "--width", "35") == "see https://example.com/search?q=lean+4"
+
+
+def test_path_ending_in_slash_in_prose_keeps_its_space():
+    # `src/` has no host, so it is not a URL: a wrap after it is an ordinary space.
+    text = ("  ▎ The tool lives in the directory src/\n"   # 39
+            "  ▎ under the repo root.\n")
+    assert run(text, "--width", "39") == "The tool lives in the directory src/ under the repo root."
+
+
 def test_no_trailing_blank_lines():
     assert run("  ls\n\n\n") == "ls"
 

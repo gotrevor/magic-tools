@@ -54,6 +54,8 @@ QUOTE_RE = re.compile(r"^\s*▎ ?")
 BULLET_RE = re.compile(r"^(\s*)[⏺•] ")  # CC and Codex message bullets
 LIST_RE = re.compile(r"^\s*([-*]|\d+[.)]|\$|#|>)\s")
 SENTENCE_END_RE = re.compile(r"[.?!][\"')\]]*$")
+URL_TAIL_RE = re.compile(r"(?:^|\s)(?:https?://|www\.|[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}(?=/))\S*[/?=&#]$")
+URL_HEAD_RE = re.compile(r"(?:https?://|www\.)")
 CURLY = str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'", " ": " "})
 
 
@@ -133,6 +135,11 @@ def join(prev: str, raw_prev: str, nxt: str, width: int, mode: str) -> str:
     nxt = nxt.lstrip()
     if len(raw_prev) == width and " " not in raw_prev.strip():
         # A single unbroken token filling the line was split mid-token (a long URL or path).
+        return prev + nxt
+    if URL_TAIL_RE.search(prev) and not URL_HEAD_RE.match(nxt):
+        # A URL broken at a `/`, `?`, `=`... - the width test can't see it when the
+        # line's start column is unknown (a mid-line fragment), but no URL continues
+        # after a space, and none ends in those characters followed by a new word.
         return prev + nxt
     if mode == "prose" and SENTENCE_END_RE.search(prev):
         return prev + "  " + nxt
