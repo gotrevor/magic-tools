@@ -148,6 +148,30 @@ def test_url_wrapped_at_query_mark_is_glued():
     assert run(text, "cmd", "--width", "35") == "see https://example.com/search?q=lean+4"
 
 
+def test_path_split_before_slash_at_margin_is_glued():
+    # Line 1 is 30 = width.  Its last token `/tmp/abc` (8) + `/def/ghij/klmnop/qrstuv` (23)
+    # = 31 > 30: no line could hold that token, so the renderer split it and no space goes in.
+    text = ("  cp -r /aaaaaaaaaaaaaa /tmp/abc\n"
+            "  /def/ghij/klmnop/qrstuv\n")
+    assert run(text, "cmd", "--width", "30") == "cp -r /aaaaaaaaaaaaaa /tmp/abc/def/ghij/klmnop/qrstuv"
+
+
+def test_two_paths_word_wrapped_keep_their_space():
+    # Line 1 is 22, width 30: 22+1+len("/dst/file.txt") = 36 > 30 is a wrap, but
+    # `/src/a.txt` (10) + `/dst/file.txt` (13) = 23 fits a line, so it was a word-wrap.
+    text = ("  cp --preserve /src/a.txt\n"
+            "  /dst/file.txt\n")
+    assert run(text, "cmd", "--width", "30") == "cp --preserve /src/a.txt /dst/file.txt"
+
+
+def test_short_line_before_long_token_line_keeps_its_space():
+    # 9+1+31 > 30 is a wrap, and `/tmp` + the 31-char token can't share a line, but
+    # "run: /tmp" stops well short of the margin, so the renderer did not cut a token there.
+    text = ("  run: /tmp\n"
+            "  /aaaaaaaaaa/bbbbbbbbbb/cccccccc\n")
+    assert run(text, "cmd", "--width", "30") == "run: /tmp /aaaaaaaaaa/bbbbbbbbbb/cccccccc"
+
+
 def test_path_ending_in_slash_in_prose_keeps_its_space():
     # `src/` has no host, so it is not a URL: a wrap after it is an ordinary space.
     text = ("  ▎ The tool lives in the directory src/\n"   # 39
