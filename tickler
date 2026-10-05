@@ -1,0 +1,291 @@
+#!/usr/bin/env -S /opt/homebrew/bin/uv run --quiet --with tomlkit python3
+# uv by absolute path: a GUI app that runs this gets PATH=/usr/bin:/bin:/usr/sbin:/sbin.
+"""tickler - dated reminders as a TOML file, exported as JSON for a dashboard.
+
+Reminders are data, not prose an assistant has to re-read every session: a
+TOML file, a CLI to snooze / finish / add, and an exported JSON file that a
+glanceable viewer (e.g. a menu-bar app) can watch.  "Has X happened yet?"
+reminders carry a check command, so a scheduled job does the looking.
+
+Data: $TICKLER_FILE, default ~/.local/share/tickler/items.toml:
+
+    base = "~/notes"                    # optional: relative `detail` paths resolve here
+                                        # (default: the data file's directory)
+    [[item]]
+    id     = "renew-passport"           # stable slug
+    due    = 2026-11-01                 # TOML date; item surfaces on/after it
+    title  = "Renew passport"           # one line, shown in the viewer
+    detail = "admin/passport.md"        # optional file the viewer opens
+    notes  = "..."                      # optional free text (tooltip)
+    owner  = "agent"                    # optional: a chore for an agent, not you
+    check  = "shell command"            # optional: makes the item SILENT, see below
+    recheck_days = 1                    # optional, silent items only
+    log    = ["2026-10-05 snoozed +1d"] # appended by the CLI
+
+Silent items stay hidden until `tickler check` runs their command on/after `due`:
+exit 0 = condition met, the item fires (surfaces); exit 1 = not yet, `due` moves
+forward `recheck_days` with no one told; any other exit = the check is broken,
+and the item surfaces with that flagged.  Run `tickler check` from cron/launchd.
+
+Every mutation re-exports $TICKLER_EXPORT/items.json (default ~/.attn/tickler):
+{"cli": <this script>, "generated": <date>, "items": [...]}, listing future items
+too, so the viewer filters `due <= today` itself and a date rollover needs no job.
+If the data file's directory is a git repo, every mutation is committed.
+
+Usage:
+    tickler                      # what's due now (same as `tickler list`)
+    tickler list --all           # everything, future and silent included
+    tickler show ID
+    tickler snooze ID [DAYS|YYYY-MM-DD]   # default 1 day
+    tickler done ID              # archive to done.toml beside the data file
+    tickler add ID DUE TITLE [--detail P] [--notes N] [--owner agent] [--check CMD]
+    tickler check                # run due silent checks
+    tickler export
+    tickler test                 # run the pytest suite
+"""
+
+import argparse
+import datetime as dt
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import tomlkit
+
+HOME = Path.home()
+DATA = Path(os.environ.get("TICKLER_FILE", HOME / ".local/share/tickler/items.toml"))
+EXPORT_DIR = Path(os.environ.get("TICKLER_EXPORT", HOME / ".attn/tickler"))
+
+
+def today() -> dt.date:
+    override = os.environ.get("TICKLER_TODAY")  # tests pin the clock
+    return dt.date.fromisoformat(override) if override else dt.date.today()
+
+
+def load():
+    if not DATA.exists():
+        return tomlkit.document()
+    return tomlkit.parse(DATA.read_text(encoding="utf-8"))
+
+
+def save(doc):
+    tmp = DATA.with_suffix(".tmp")
+    tmp.write_text(tomlkit.dumps(doc), encoding="utf-8")
+    tmp.replace(DATA)
+    export(doc)
+    commit(f"tickler: {' '.join(sys.argv[1:3])}")
+
+
+def commit(message):
+    """Snapshot to the data dir's git repo if it has one; never fail a mutation over it."""
+    repo = DATA.parent
+    if not (repo / ".git").exists():
+        return
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    subprocess.run(["/usr/bin/git", "-C", str(repo), "add", "-A"], env=env, capture_output=True)
+    subprocess.run(["/usr/bin/git", "-C", str(repo), "commit", "-q", "--no-verify", "-m", message],
+                   env=env, capture_output=True)
+
+
+def items(doc):
+    return doc.get("item", [])
+
+
+def find(doc, item_id):
+    for it in items(doc):
+        if it["id"] == item_id:
+            return it
+    sys.exit(f"tickler: no item {item_id!r}")
+
+
+def due_of(it) -> dt.date:
+    d = it["due"]
+    return d if isinstance(d, dt.date) else dt.date.fromisoformat(str(d))
+
+
+def is_silent(it):
+    return "check" in it and not it.get("fired", False)
+
+
+def surfaced(it, now):
+    """Due and either a plain item, a fired check, or a broken check."""
+    if due_of(it) > now:
+        return False
+    return not is_silent(it) or bool(it.get("broken"))
+
+
+def log(it, text):
+    if "log" not in it:
+        it["log"] = tomlkit.array()
+    it["log"].append(f"{today().isoformat()} {text}")
+
+
+def fmt(it, now):
+    days = (now - due_of(it)).days
+    when = "today" if days == 0 else (f"{days}d over" if days > 0 else f"in {-days}d")
+    tags = ""
+    if it.get("owner", "me") != "me":
+        tags += " 🤖"
+    if is_silent(it) and not it.get("broken"):
+        tags += " 🤫"
+    if it.get("broken"):
+        tags += " ⚠️check-broken"
+    return f"{due_of(it).isoformat()}  {when:>9}  {it['id']:<22} {it['title']}{tags}"
+
+
+def export(doc):
+    now = today()
+    base = Path(str(doc.get("base", DATA.parent))).expanduser()
+    rows = []
+    for it in items(doc):
+        if is_silent(it) and not it.get("broken"):
+            continue  # nobody's problem until the check fires
+        detail = it.get("detail", "")
+        if detail and not detail.startswith("/"):
+            detail = str(base / detail)
+        rows.append({
+            "id": it["id"],
+            "due": due_of(it).isoformat(),
+            "title": str(it["title"]),
+            "notes": str(it.get("notes", "")),
+            "path": detail or str(DATA),
+            "owner": str(it.get("owner", "me")),
+            "broken": bool(it.get("broken", False)),
+        })
+    rows.sort(key=lambda r: (r["due"], r["id"]))
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {"cli": str(Path(__file__).resolve()), "generated": now.isoformat(), "items": rows}
+    tmp = EXPORT_DIR / ".items.json.tmp"
+    tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8")
+    tmp.replace(EXPORT_DIR / "items.json")
+
+
+def cmd_list(args):
+    doc, now = load(), today()
+    shown = [it for it in items(doc) if args.all or surfaced(it, now)]
+    for it in sorted(shown, key=due_of):
+        print(fmt(it, now))
+    if not shown:
+        print("tickler: nothing due")
+
+
+def cmd_show(args):
+    it = find(load(), args.id)
+    print(tomlkit.dumps({"item": [it]}).strip())
+
+
+def cmd_snooze(args):
+    doc = load()
+    it = find(doc, args.id)
+    when = args.when or "1"
+    if when.isdigit():
+        new = max(today(), due_of(it)) + dt.timedelta(days=int(when))
+        log(it, f"snoozed +{when}d")
+    else:
+        new = dt.date.fromisoformat(when)
+        log(it, f"snoozed to {new.isoformat()}")
+    it["due"] = new
+    save(doc)
+    print(fmt(it, today()))
+
+
+def cmd_done(args):
+    doc = load()
+    it = find(doc, args.id)
+    log(it, "done")
+    finished = it.unwrap()
+    arr = doc["item"]
+    del arr[next(i for i, x in enumerate(arr) if x["id"] == args.id)]
+    archive = DATA.with_name("done.toml")
+    adoc = tomlkit.parse(archive.read_text(encoding="utf-8")) if archive.exists() else tomlkit.document()
+    if "item" not in adoc:
+        adoc["item"] = tomlkit.aot()
+    adoc["item"].append(finished)
+    archive.write_text(tomlkit.dumps(adoc), encoding="utf-8")
+    save(doc)
+    print(f"tickler: done {args.id}")
+
+
+def cmd_add(args):
+    doc = load()
+    if any(it["id"] == args.id for it in items(doc)):
+        sys.exit(f"tickler: {args.id!r} already exists")
+    it = tomlkit.table()
+    it["id"] = args.id
+    it["due"] = dt.date.fromisoformat(args.due)
+    it["title"] = args.title
+    for key in ("detail", "notes", "owner", "check"):
+        if getattr(args, key):
+            it[key] = getattr(args, key)
+    if "item" not in doc:
+        doc["item"] = tomlkit.aot()
+    doc["item"].append(it)
+    save(doc)
+    print(fmt(it, today()))
+
+
+def cmd_check(args):
+    doc, now = load(), today()
+    changed = False
+    for it in items(doc):
+        if not is_silent(it) or due_of(it) > now:
+            continue
+        r = subprocess.run(["/bin/bash", "-c", it["check"]], capture_output=True, text=True, timeout=120)
+        changed = True
+        if r.returncode == 0:
+            it["fired"] = True
+            it.pop("broken", None)
+            log(it, "check fired")
+            print(f"fired   {it['id']}")
+        elif r.returncode == 1:
+            it["due"] = now + dt.timedelta(days=int(it.get("recheck_days", 1)))
+            it.pop("broken", None)
+            print(f"waiting {it['id']} -> {it['due']}")
+        else:
+            it["broken"] = True
+            err = (r.stderr or r.stdout).strip().splitlines()
+            log(it, f"check broken (exit {r.returncode}): {err[-1] if err else ''}"[:200])
+            print(f"BROKEN  {it['id']} exit {r.returncode}")
+    if changed:
+        save(doc)
+    else:
+        export(doc)
+
+
+def cmd_export(args):
+    export(load())
+
+
+def cmd_test(rest):
+    test = Path(__file__).resolve().with_name("test_tickler.py")
+    os.execv(str(test), [str(test), *rest])
+
+
+def main():
+    p = argparse.ArgumentParser(prog="tickler", description=__doc__.split("\n\n")[0])
+    sub = p.add_subparsers(dest="cmd")
+    s = sub.add_parser("list"); s.add_argument("--all", action="store_true"); s.set_defaults(fn=cmd_list)
+    s = sub.add_parser("show"); s.add_argument("id"); s.set_defaults(fn=cmd_show)
+    s = sub.add_parser("snooze"); s.add_argument("id"); s.add_argument("when", nargs="?"); s.set_defaults(fn=cmd_snooze)
+    s = sub.add_parser("done"); s.add_argument("id"); s.set_defaults(fn=cmd_done)
+    s = sub.add_parser("add")
+    for a in ("id", "due", "title"):
+        s.add_argument(a)
+    for a in ("--detail", "--notes", "--owner", "--check"):
+        s.add_argument(a)
+    s.set_defaults(fn=cmd_add)
+    s = sub.add_parser("check"); s.set_defaults(fn=cmd_check)
+    s = sub.add_parser("export"); s.set_defaults(fn=cmd_export)
+    sub.add_parser("test")
+    if sys.argv[1:2] == ["test"]:
+        cmd_test(sys.argv[2:])  # pass pytest flags through untouched
+    args = p.parse_args()
+    if not args.cmd:
+        args = p.parse_args(["list"])
+    args.fn(args)
+
+
+if __name__ == "__main__":
+    main()
