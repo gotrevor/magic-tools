@@ -67,10 +67,12 @@ def clean_lines(text: str) -> tuple[list[str], bool, int | None]:
     wrap test are taken AFTER this, so the bar and bullet don't skew the width.
     """
     lines = [ln.replace(" ", " ").rstrip() for ln in text.replace("\r\n", "\n").split("\n")]
+    # Bullet before bar: a quoted reply opens `⏺ ▎ `, and the bar regex only sees
+    # that bar once the bullet has become indent.
+    lines = [BULLET_RE.sub(r"\1  ", ln) for ln in lines]
     quoted = any(QUOTE_RE.match(ln) for ln in lines if ln.strip())
     if quoted:
         lines = [QUOTE_RE.sub("", ln) if QUOTE_RE.match(ln) else ln.strip() for ln in lines]
-    lines = [BULLET_RE.sub(r"\1  ", ln) for ln in lines]
     start = partial_start(lines)
     return dedent(lines, start), quoted, start
 

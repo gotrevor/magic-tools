@@ -74,6 +74,25 @@ def test_cc_bullet_and_indent_stripped():
     assert run(text, "--width", "43") == "Done.  The build is green and the tests pass."
 
 
+def test_bullet_then_quote_bar_both_stripped():
+    # A quoted reply opens with CC's bullet AND the bar on the same line.
+    text = ("⏺ ▎ First line of the quote.\n"
+            "  ▎\n"
+            "  ▎ Second paragraph.\n")
+    assert run(text) == "First line of the quote.\n\nSecond paragraph."
+
+
+def test_bullet_then_quote_bar_does_not_inflate_inferred_width():
+    # Stripped lengths: 69, 66, 5 -> width 69.  66+1+len("done.") = 72 > 69, so the
+    # second break is a wrap too.  A bar left on line one would make the width 73,
+    # and that break would read as a real newline.
+    text = ("⏺ ▎ Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu\n"
+            "  ▎ xi omicron pi rho sigma tau upsilon phi chi psi omega and so on ok\n"
+            "  ▎ done.\n")
+    assert run(text) == ("Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu "
+                         "xi omicron pi rho sigma tau upsilon phi chi psi omega and so on ok done.")
+
+
 def test_bullet_first_line_is_not_a_midline_fragment():
     # The ⏺ bullet sits at column 0 but stands in for CC's indent, so the
     # short "Run this:" line is a whole line, not a partial selection.
