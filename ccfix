@@ -21,7 +21,8 @@ clean text back.
                        exact beats the inferred floor below
 
 What it does:
-  - strips the `▎` quote bar, CC's `⏺` / Codex's `•` bullet, and the common indent
+  - strips the `▎` quote bar, the `│` box border, CC's `⏺` / Codex's `•` bullet,
+    and the common indent
   - joins lines CC wrapped, keeping real newlines (see `was_wrapped`)
   - prose: one paragraph per line, blank line between paragraphs, two spaces
     after a sentence-ending period when a wrap fell there
@@ -51,6 +52,9 @@ FIXTURES = Path(__file__).resolve().parent / "tests" / "ccfix"
 CACHE = Path(os.environ.get("CCFIX_CACHE", Path.home() / ".cache" / "ccfix"))
 
 QUOTE_RE = re.compile(r"^\s*▎ ?")
+BOX_RE = re.compile(r"^\s*│ ?")
+BOX_RIGHT_RE = re.compile(r" *│$")
+BOX_EDGE_RE = re.compile(r"^\s*[╭╰]─*[╮╯]?$")
 BULLET_RE = re.compile(r"^(\s*)[⏺•] ")  # CC and Codex message bullets
 LIST_RE = re.compile(r"^\s*([-*]|\d+[.)]|\$|#|>)\s")
 SENTENCE_END_RE = re.compile(r"[.?!][\"')\]]*$")
@@ -60,13 +64,16 @@ CURLY = str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'", " ": " "
 
 
 def clean_lines(text: str) -> tuple[list[str], bool, int | None]:
-    """Strip trailing space, NBSP, the ⏺/• bullet, and the ▎ quote bar.
+    """Strip trailing space, NBSP, the ⏺/• bullet, the ▎ quote bar, and the
+    │ box border CC draws around tool calls and permission prompts.
 
     Returns the lines, whether any quote bar was present, and the index of a
     mid-line fragment (see `partial_start`).  Lengths for the
     wrap test are taken AFTER this, so the bar and bullet don't skew the width.
     """
     lines = [ln.replace(" ", " ").rstrip() for ln in text.replace("\r\n", "\n").split("\n")]
+    if any(BOX_RE.match(ln) for ln in lines if ln.strip()):
+        lines = [BOX_RE.sub("", BOX_RIGHT_RE.sub("", ln)) for ln in lines if not BOX_EDGE_RE.match(ln)]
     # Bullet before bar: a quoted reply opens `⏺ ▎ `, and the bar regex only sees
     # that bar once the bullet has become indent.
     lines = [BULLET_RE.sub(r"\1  ", ln) for ln in lines]
