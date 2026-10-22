@@ -147,6 +147,22 @@ def test_flush_backslash_line_above_indented_continuation_stays_split():
     assert run("curl -sS \\\n    -o out.json\n") == "curl -sS \\\n    -o out.json"
 
 
+def test_box_border_stripped_and_wrap_joined():
+    # Stripped lengths: 55, 40 -> width is the 60 floor.  55+1+len("env-no-export") = 69 > 60: a wrap.
+    text = (" │ aws configure export-credentials --profile dev --format\n"
+            " │ env-no-export | grep EXPIRATION; date -u\n")
+    assert run(text) == ("aws configure export-credentials --profile dev --format "
+                         "env-no-export | grep EXPIRATION; date -u")
+
+
+def test_full_box_edges_and_right_border_stripped():
+    text = ("╭──────────────────────╮\n"
+            "│ ls -la               │\n"
+            "│ pwd                  │\n"
+            "╰──────────────────────╯\n")
+    assert run(text) == "ls -la\npwd"
+
+
 def test_curly_quotes_straightened_in_cmd():
     assert run("  echo “hi” ‘there’\n", "cmd") == "echo \"hi\" 'there'"
 
@@ -301,3 +317,9 @@ def test_capture_rejects_bad_name(fakeclip):
     _, env = fakeclip
     r = subprocess.run([str(SCRIPT), "capture", "../escape"], env=env, capture_output=True)
     assert r.returncode == 2
+
+
+def test_mid_line_box_char_in_prose_untouched():
+    # A `│` that is not a left border (e.g. quoted from a diagram) is ordinary text.
+    text = "The tree view draws a │ between columns.\nNext line here.\n"
+    assert run(text) == "The tree view draws a │ between columns.\nNext line here."
